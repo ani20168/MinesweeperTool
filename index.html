@@ -116,6 +116,14 @@
   .fadeOut {
     animation: fadeOutDown 0.5s forwards;
   }
+  /* 闪烁动画 */
+  @keyframes blink {
+    0%, 100% { background-color: white; }
+    50% { background-color: yellow; }
+  }
+  .error-cell {
+    animation: blink 0.5s ease-in-out 3;
+  }
 </style>
 </head>
 <body>
@@ -133,15 +141,15 @@
     <input type="range" id="sizeSlider" min="20" max="80" value="40" oninput="adjustCellSize(this.value)">
   </div>
   <div class="settings-group">
-    <label>方格数量：</label>
+    <label>方格數量：</label>
     横向：<input type="number" id="gridWidth" value="5" min="2" max="20">
-    纵向：<input type="number" id="gridHeight" value="5" min="2" max="20">
+    直向：<input type="number" id="gridHeight" value="5" min="2" max="20">
     <button onclick="applyGridSize()">套用</button>
   </div>
 </div>
 
 <!-- 加载提示 -->
-<div id="loading">分析中，请稍候...</div>
+<div id="loading">分析中，請稍後...</div>
 
 <script>
 let gridWidth = 5;
@@ -226,6 +234,11 @@ function analyze() {
   constraints = [];
   const variableMap = new Map();
 
+  // 清除所有错误样式
+  document.querySelectorAll('.error-cell').forEach(cell => {
+    cell.classList.remove('error-cell');
+  });
+
   // 建立变量列表和约束条件
   for (let y = 0; y < gridHeight; y++) {
     for (let x = 0; x < gridWidth; x++) {
@@ -234,13 +247,14 @@ function analyze() {
         const input = cellData.element.querySelector('input');
         const count = parseInt(input.value);
         if (isNaN(count) || count < 0 || count > 8) {
-          alert('请输入有效的数字（0-8）');
+          alert('請輸入有效的數字（0-8）');
           return;
         }
         const neighbors = getNeighbors(x, y);
         const unprobedNeighbors = neighbors.filter(n => grid[n.y][n.x].state === 'unprobed');
         if (count < 0 || count > unprobedNeighbors.length) {
-          alert(`位于 (${x + 1}, ${y + 1}) 的附近地雷数不合理。`);
+          // 闪烁有问题的格子
+          highlightErrorCell(cellData.element);
           return;
         }
         const constraint = {
@@ -263,7 +277,7 @@ function analyze() {
 
   // 检查是否有约束条件
   if (constraints.length === 0) {
-    alert('没有可分析的已探测方格。');
+    alert('沒有可分析的已探測方格。');
     return;
   }
 
@@ -279,7 +293,7 @@ function analyze() {
     worker.terminate(); // 终止 Worker
 
     if (validAssignments === 0) {
-      alert('输入的附近地雷数有矛盾，请检查。');
+      alert('輸入的附近地雷數有矛盾，請檢查。');
       hideLoading();
       return;
     }
@@ -304,9 +318,17 @@ function analyze() {
   worker.onerror = function(error) {
     worker.terminate();
     console.error('Worker error:', error);
-    alert('计算过程中出现错误。');
+    alert('計算過程中出現錯誤。');
     hideLoading();
   };
+}
+
+function highlightErrorCell(cell) {
+  cell.classList.add('error-cell');
+  // 在动画结束后移除类
+  setTimeout(() => {
+    cell.classList.remove('error-cell');
+  }, 1500); // 0.5s * 3次 = 1.5s
 }
 
 function showLoading() {
@@ -371,7 +393,7 @@ function applyGridSize() {
   const newHeight = parseInt(heightInput.value);
 
   if (isNaN(newWidth) || isNaN(newHeight) || newWidth < 2 || newHeight < 2 || newWidth > 20 || newHeight > 20) {
-    alert('方格数量应在2到20之间。');
+    alert('方格數量應在2~20之間。');
     return;
   }
 
