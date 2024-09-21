@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>踩地雷小工具</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+  }
+  #grid {
+    display: grid;
+    gap: 2px;
+    margin: 20px auto;
+    width: max-content;
+  }
+  .cell {
+    background-color: lightgray;
+    position: relative;
+    text-align: center;
+    font-size: 16px;
+    cursor: pointer;
+    overflow: hidden;
+  }
+  .probed {
+    background-color: white;
+  }
+  .unprobed {
+    background-color: lightgray;
+  }
+  .mine {
+    background-color: lightcoral;
+  }
+  .cell input {
+    width: 100%;
+    height: 100%;
+    text-align: center;
+    font-size: 16px;
+    border: none;
+    padding: 0;
+    box-sizing: border-box;
+    background: none;
+  }
+  #buttons, #settings {
+    text-align: center;
+    margin-top: 20px;
+  }
+  /* 按钮样式 */
+  button {
+    border: 1px solid #007BFF;
+    background-color: transparent;
+    color: #007BFF;
+    padding: 8px 16px;
+    font-size: 16px;
+    cursor: pointer;
+    margin: 0 5px;
+    transition: background-color 0.3s, color 0.3s;
+  }
+  button:hover {
+    background-color: #007BFF;
+    color: white;
+  }
+  /* 滑动条样式 */
+  #sizeSlider {
+    width: 200px;
+  }
+  /* 设置区域样式 */
+  .settings-group {
+    margin: 10px 0;
+  }
+  .settings-group label {
+    margin-right: 10px;
+  }
+  .settings-group input[type="number"] {
+    width: 50px;
+  }
+</style>
+</head>
+<body>
+
+<div id="grid"></div>
+
+<div id="buttons">
+  <button onclick="resetGrid()">重置</button>
+  <button onclick="analyze()">分析</button>
+</div>
+
+<div id="settings">
+  <div class="settings-group">
+    <label for="sizeSlider">界面大小：</label>
+    <input type="range" id="sizeSlider" min="20" max="80" value="40" oninput="adjustCellSize(this.value)">
+  </div>
+  <div class="settings-group">
+    <label>方格数量：</label>
+    横向：<input type="number" id="gridWidth" value="5" min="2" max="20">
+    纵向：<input type="number" id="gridHeight" value="5" min="2" max="20">
+    <button onclick="applyGridSize()">套用</button>
+  </div>
+</div>
+
+<script>
+let gridWidth = 5;
+let gridHeight = 5;
+let cellSize = 40; // 默认方格大小
+let grid = [];
+let variables = [];
+let constraints = [];
+
+function createGrid() {
+  const gridElement = document.getElementById('grid');
+  gridElement.style.gridTemplateColumns = `repeat(${gridWidth}, ${cellSize}px)`;
+  gridElement.style.gridTemplateRows = `repeat(${gridHeight}, ${cellSize}px)`;
+  gridElement.innerHTML = '';
+  grid = [];
+  for (let y = 0; y < gridHeight; y++) {
+    const row = [];
+    for (let x = 0; x < gridWidth; x++) {
+      const cell = document.createElement('div');
+      cell.classList.add('cell', 'unprobed');
+      cell.style.width = `${cellSize}px`;
+      cell.style.height = `${cellSize}px`;
+      cell.dataset.x = x;
+      cell.dataset.y = y;
+      cell.onclick = () => toggleCell(cell, x, y);
+      gridElement.appendChild(cell);
+      row.push({ state: 'unprobed', element: cell });
+    }
+    grid.push(row);
+  }
+}
+
+function toggleCell(cell, x, y) {
+  const cellData = grid[y][x];
+  if (cellData.state === 'unprobed') {
+    cell.innerHTML = ''; // 清除方格内容
+    cellData.state = 'probed';
+    cell.classList.remove('unprobed');
+    cell.classList.add('probed');
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = 0;
+    input.max = 8;
+    input.value = 0; // 设置默认值为0
+    input.addEventListener('click', function(event) {
+      event.stopPropagation(); // 防止点击输入框时触发父元素的点击事件
+    });
+    // 添加滚轮事件监听
+    input.addEventListener('wheel', function(event) {
+      event.preventDefault();
+      let delta = Math.sign(event.deltaY);
+      let newValue = parseInt(input.value) - delta;
+      if (newValue >= 0 && newValue <= 8) {
+        input.value = newValue;
+      }
+    });
+    cell.appendChild(input);
+    cell.onclick = null; // 移除单击事件
+    cell.ondblclick = () => unprobeCell(cell, x, y); // 添加双击事件
+  }
+}
+
+function unprobeCell(cell, x, y) {
+  const cellData = grid[y][x];
+  if (cellData.state === 'probed') {
+    cellData.state = 'unprobed';
+    cell.classList.remove('probed');
+    cell.classList.add('unprobed');
+    cell.innerHTML = '';
+    cell.onclick = () => toggleCell(cell, x, y); // 重新添加单击事件
+    cell.ondblclick = null; // 移除双击事件
+  }
+}
+
+function resetGrid() {
+  createGrid();
+}
+
+function analyze() {
+  variables = [];
+  constraints = [];
+  const variableMap = new Map();
+
+  // 建立变量列表和约束条件
+  for (let y = 0; y < gridHeight; y++) {
+    for (let x = 0; x < gridWidth; x++) {
+      const cellData = grid[y][x];
+      if (cellData.state === 'probed') {
+        const input = cellData.element.querySelector('input');
+        const count = parseInt(input.value);
+        if (isNaN(count) || count < 0 || count > 8) {
+          alert('请输入有效的数字（0-8）');
+          return;
+        }
+        const neighbors = getNeighbors(x, y);
+        const unprobedNeighbors = neighbors.filter(n => grid[n.y][n.x].state === 'unprobed');
+        if (count < 0 || count > unprobedNeighbors.length) {
+          alert(`位于 (${x + 1}, ${y + 1}) 的附近地雷数不合理。`);
+          return;
+        }
+        const constraint = {
+          cells: unprobedNeighbors.map(n => `${n.x},${n.y}`),
+          total: count
+        };
+        constraints.push(constraint);
+
+        // 添加变量
+        unprobedNeighbors.forEach(n => {
+          const key = `${n.x},${n.y}`;
+          if (!variableMap.has(key)) {
+            variableMap.set(key, { x: n.x, y: n.y, count: 0 });
+            variables.push(key);
+          }
+        });
+      }
+    }
+  }
+
+  // 检查是否有约束条件
+  if (constraints.length === 0) {
+    alert('没有可分析的已探测方格。');
+    return;
+  }
+
+  // 枚举所有可能的地雷配置
+  const totalAssignments = Math.pow(2, variables.length);
+  let validAssignments = 0;
+  const mineCounts = {};
+  variables.forEach(v => mineCounts[v] = 0);
+
+  for (let i = 0; i < totalAssignments; i++) {
+    const assignment = {};
+    variables.forEach((v, index) => {
+      assignment[v] = (i >> index) & 1;
+    });
+    if (isValidAssignment(assignment)) {
+      validAssignments++;
+      variables.forEach(v => {
+        if (assignment[v] === 1) {
+          mineCounts[v]++;
+        }
+      });
+    }
+  }
+
+  if (validAssignments === 0) {
+    alert('输入的附近地雷数有矛盾，请检查。');
+    return;
+  }
+
+  // 显示概率
+  variables.forEach(v => {
+    const [x, y] = v.split(',').map(Number);
+    const probability = (mineCounts[v] / validAssignments) * 100;
+    const cellData = grid[y][x];
+    cellData.element.innerHTML = probability.toFixed(1) + '%';
+    cellData.element.style.lineHeight = `${cellSize}px`; // 调整文本垂直居中
+    if (probability === 100) {
+      cellData.element.classList.add('mine');
+    } else {
+      cellData.element.classList.remove('mine');
+    }
+  });
+}
+
+function isValidAssignment(assignment) {
+  for (const constraint of constraints) {
+    let sum = 0;
+    for (const cell of constraint.cells) {
+      sum += assignment[cell] || 0;
+    }
+    if (sum !== constraint.total) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function getNeighbors(x, y) {
+  const neighbors = [];
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx >= 0 && nx < gridWidth && ny >= 0 && ny < gridHeight) {
+        neighbors.push({ x: nx, y: ny });
+      }
+    }
+  }
+  return neighbors;
+}
+
+// 调整方格大小
+function adjustCellSize(size) {
+  cellSize = size;
+  const cells = document.querySelectorAll('.cell');
+  cells.forEach(cell => {
+    cell.style.width = `${cellSize}px`;
+    cell.style.height = `${cellSize}px`;
+  });
+  // 更新网格模板
+  const gridElement = document.getElementById('grid');
+  gridElement.style.gridTemplateColumns = `repeat(${gridWidth}, ${cellSize}px)`;
+  gridElement.style.gridTemplateRows = `repeat(${gridHeight}, ${cellSize}px)`;
+}
+
+// 应用新的网格尺寸
+function applyGridSize() {
+  const widthInput = document.getElementById('gridWidth');
+  const heightInput = document.getElementById('gridHeight');
+  const newWidth = parseInt(widthInput.value);
+  const newHeight = parseInt(heightInput.value);
+
+  if (isNaN(newWidth) || isNaN(newHeight) || newWidth < 2 || newHeight < 2 || newWidth > 20 || newHeight > 20) {
+    alert('方格数量应在2到20之间。');
+    return;
+  }
+
+  gridWidth = newWidth;
+  gridHeight = newHeight;
+  createGrid();
+}
+
+// 初始化
+createGrid();
+</script>
+
+</body>
+</html>
