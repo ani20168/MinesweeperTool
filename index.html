@@ -73,6 +73,49 @@
   .settings-group input[type="number"] {
     width: 50px;
   }
+  /* 加载提示样式 */
+  #loading {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(255, 255, 255, 0.9);
+    color: #333;
+    padding: 10px 20px;
+    border: 1px solid #007BFF;
+    border-radius: 5px;
+    font-size: 16px;
+    z-index: 1000;
+    display: none;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+  }
+  /* 动画效果 */
+  @keyframes fadeInDown {
+    from {
+      opacity: 0;
+      transform: translate(-50%, -20px);
+    }
+    to {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+  }
+  @keyframes fadeOutDown {
+    from {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+    to {
+      opacity: 0;
+      transform: translate(-50%, 20px);
+    }
+  }
+  .fadeIn {
+    animation: fadeInDown 0.5s forwards;
+  }
+  .fadeOut {
+    animation: fadeOutDown 0.5s forwards;
+  }
 </style>
 </head>
 <body>
@@ -90,12 +133,15 @@
     <input type="range" id="sizeSlider" min="20" max="80" value="40" oninput="adjustCellSize(this.value)">
   </div>
   <div class="settings-group">
-    <label>方格數量：</label>
-    橫向：<input type="number" id="gridWidth" value="5" min="2" max="20">
-    直向：<input type="number" id="gridHeight" value="5" min="2" max="20">
+    <label>方格数量：</label>
+    横向：<input type="number" id="gridWidth" value="5" min="2" max="20">
+    纵向：<input type="number" id="gridHeight" value="5" min="2" max="20">
     <button onclick="applyGridSize()">套用</button>
   </div>
 </div>
+
+<!-- 加载提示 -->
+<div id="loading">分析中，请稍候...</div>
 
 <script>
 let gridWidth = 5;
@@ -104,6 +150,7 @@ let cellSize = 40; // 默认方格大小
 let grid = [];
 let variables = [];
 let constraints = [];
+let loadingStartTime = 0;
 
 function createGrid() {
   const gridElement = document.getElementById('grid');
@@ -187,13 +234,13 @@ function analyze() {
         const input = cellData.element.querySelector('input');
         const count = parseInt(input.value);
         if (isNaN(count) || count < 0 || count > 8) {
-          alert('請輸入有效的數字（0-8）');
+          alert('请输入有效的数字（0-8）');
           return;
         }
         const neighbors = getNeighbors(x, y);
         const unprobedNeighbors = neighbors.filter(n => grid[n.y][n.x].state === 'unprobed');
         if (count < 0 || count > unprobedNeighbors.length) {
-          alert(`位於 (${x + 1}, ${y + 1}) 的附近地雷數不合理。`);
+          alert(`位于 (${x + 1}, ${y + 1}) 的附近地雷数不合理。`);
           return;
         }
         const constraint = {
@@ -216,62 +263,75 @@ function analyze() {
 
   // 检查是否有约束条件
   if (constraints.length === 0) {
-    alert('沒有可分析的已探測方格。');
+    alert('没有可分析的已探测方格。');
     return;
   }
 
-  // 枚举所有可能的地雷配置
-  const totalAssignments = Math.pow(2, variables.length);
-  let validAssignments = 0;
-  const mineCounts = {};
-  variables.forEach(v => mineCounts[v] = 0);
+  // 使用 Web Worker 进行计算
+  const worker = new Worker('worker.js');
+  worker.postMessage({ variables, constraints });
 
-  for (let i = 0; i < totalAssignments; i++) {
-    const assignment = {};
-    variables.forEach((v, index) => {
-      assignment[v] = (i >> index) & 1;
+  // 显示加载提示
+  showLoading();
+
+  worker.onmessage = function(event) {
+    const { validAssignments, mineCounts } = event.data;
+    worker.terminate(); // 终止 Worker
+
+    if (validAssignments === 0) {
+      alert('输入的附近地雷数有矛盾，请检查。');
+      hideLoading();
+      return;
+    }
+
+    // 显示概率
+    variables.forEach(v => {
+      const [x, y] = v.split(',').map(Number);
+      const probability = (mineCounts[v] / validAssignments) * 100;
+      const cellData = grid[y][x];
+      cellData.element.innerHTML = probability.toFixed(1) + '%';
+      cellData.element.style.lineHeight = `${cellSize}px`; // 调整文本垂直居中
+      if (probability === 100) {
+        cellData.element.classList.add('mine');
+      } else {
+        cellData.element.classList.remove('mine');
+      }
     });
-    if (isValidAssignment(assignment)) {
-      validAssignments++;
-      variables.forEach(v => {
-        if (assignment[v] === 1) {
-          mineCounts[v]++;
-        }
-      });
-    }
-  }
 
-  if (validAssignments === 0) {
-    alert('輸入的附近地雷數有矛盾，請檢查。');
-    return;
-  }
+    hideLoading();
+  };
 
-  // 显示概率
-  variables.forEach(v => {
-    const [x, y] = v.split(',').map(Number);
-    const probability = (mineCounts[v] / validAssignments) * 100;
-    const cellData = grid[y][x];
-    cellData.element.innerHTML = probability.toFixed(1) + '%';
-    cellData.element.style.lineHeight = `${cellSize}px`; // 调整文本垂直居中
-    if (probability === 100) {
-      cellData.element.classList.add('mine');
-    } else {
-      cellData.element.classList.remove('mine');
-    }
-  });
+  worker.onerror = function(error) {
+    worker.terminate();
+    console.error('Worker error:', error);
+    alert('计算过程中出现错误。');
+    hideLoading();
+  };
 }
 
-function isValidAssignment(assignment) {
-  for (const constraint of constraints) {
-    let sum = 0;
-    for (const cell of constraint.cells) {
-      sum += assignment[cell] || 0;
-    }
-    if (sum !== constraint.total) {
-      return false;
-    }
-  }
-  return true;
+function showLoading() {
+  const loadingElement = document.getElementById('loading');
+  loadingElement.style.display = 'block';
+  loadingElement.classList.remove('fadeOut');
+  void loadingElement.offsetWidth; // 触发重绘，重置动画
+  loadingElement.classList.add('fadeIn');
+  loadingStartTime = new Date().getTime(); // 记录开始时间
+}
+
+function hideLoading() {
+  const loadingElement = document.getElementById('loading');
+  const elapsedTime = new Date().getTime() - loadingStartTime;
+  const remainingTime = 2000 - elapsedTime; // 最短显示2秒
+  const delay = remainingTime > 0 ? remainingTime : 0;
+
+  setTimeout(() => {
+    loadingElement.classList.remove('fadeIn');
+    void loadingElement.offsetWidth; // 触发重绘，重置动画
+    loadingElement.classList.add('fadeOut');
+    setTimeout(() => {
+      loadingElement.style.display = 'none';
+    }, 500); // 等待动画完成后隐藏
+  }, delay);
 }
 
 function getNeighbors(x, y) {
@@ -311,7 +371,7 @@ function applyGridSize() {
   const newHeight = parseInt(heightInput.value);
 
   if (isNaN(newWidth) || isNaN(newHeight) || newWidth < 2 || newHeight < 2 || newWidth > 20 || newHeight > 20) {
-    alert('方格數量應在2到20之間。');
+    alert('方格数量应在2到20之间。');
     return;
   }
 
